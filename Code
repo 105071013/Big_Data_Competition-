@@ -1,0 +1,338 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt 
+plt.rc("font", size=16)
+%matplotlib inline
+from matplotlib.pylab import rcParams
+rcParams['figure.figsize'] = 12, 4
+import seaborn as sns
+sns.set(style="white")
+sns.set(style="whitegrid", color_codes=True)
+from sklearn import preprocessing
+from sklearn.linear_model import LogisticRegression
+from sklearn.model_selection import train_test_split
+from sklearn.datasets import make_regression
+from sklearn.linear_model import Lasso
+from sklearn.preprocessing import LabelEncoder  
+from sklearn import metrics
+from sklearn.model_selection import GridSearchCV
+from sklearn.metrics import classification_report
+from xgboost import XGBClassifier
+import xgboost as xgb
+
+
+#讀取資料
+train = pd.read_csv('train.csv' , header = 0)
+train = train.drop(train.columns[0],axis=1)
+train_test = pd.read_csv('test.csv' , header = 0)
+print(train.shape)
+print(list(train.columns))
+
+#將以漢字低，中，高表示程度的資料轉爲數值形式,同時以平均值取代nan
+train['LIFE_CNT'] = train['LIFE_CNT'].map(dict(低=1, 中=2, 高=3))
+train_test['LIFE_CNT'] = train_test['LIFE_CNT'].map(dict(低=1, 中=2, 高=3))
+train['LIFE_CNT'].fillna(np.nanmean(train['LIFE_CNT'], inplace = True)
+train_test['LIFE_CNT'].fillna(np.nanmean(train['LIFE_CNT'], inplace = True)
+col = ['AGE','APC_1ST_AGE','INSD_1ST_AGE','RFM_R','REBUY_TIMES_CNT']
+for i in col:
+    train[i] = train[i].map(dict(低=1,中=2,中高=3,高=4)) 
+    train_test[i] = train_test[i].map(dict(低=1,中=2,中高=3,高=4))
+	train[i].fillna(np.nanmean(train[i], inplace = True)
+	train_test[i].fillna(np.nanmean(train[i], inplace = True)
+
+#調整性別資料，並填補nan
+train['GENDER'] = train['GENDER'].map(dict(M = 1, F = 0)) 
+train_test['GENDER'] = train_test['GENDER'].map(dict(M = 1, F = 0))
+train['GENDER'].fillna(-1, inplace = True)
+train_test['GENDER'].fillna(-1, inplace = True)
+
+#將判斷類變數抓出
+outcome = [[np.nan,'N', 'Y'],[np.nan,'Y', 'N'],['N', 'Y', np.nan],['Y', 'N', np.nan],['N', np.nan, 'Y'],['Y', np.nan, 'N'],['Y', 'N'],['N', 'Y']]
+print(outcome[0])
+m = len(outcome)
+#將判斷變數轉爲數字，並處理nan值
+for i in list(train.columns):
+    for j in range(m):
+        if list(train[i].unique()) == outcome[j]:
+            train[i]=train[i].map(dict(N = 0,Y = 1))
+            train[i].fillna(-1, inplace = True) 
+        if list(train_test[i].unique()) == outcome[j]:
+            train_test[i]=train_test[i].map(dict(N = 0,Y = 1))
+            train_test[i].fillna(-1, inplace = True) 
+
+#使用LabelEncoder調整分類資料,將na以-1替代
+le = LabelEncoder()
+train['CHARGE_CITY_CD'] = le.fit_transform(train['CHARGE_CITY_CD'])
+train['CONTACT_CITY_CD'] = le.fit_transform(train['CONTACT_CITY_CD'])
+train['CUST_9_SEGMENTS_CD'] = le.fit_transform(train['CUST_9_SEGMENTS_CD'])
+train_test['CHARGE_CITY_CD'] = le.fit_transform(train_test['CHARGE_CITY_CD'])
+train_test['CONTACT_CITY_CD'] = le.fit_transform(train_test['CONTACT_CITY_CD'])
+train_test['CUST_9_SEGMENTS_CD'] = le.fit_transform(train_test['CUST_9_SEGMENTS_CD'])
+label = ['CHARGE_CITY_CD','CONTACT_CITY_CD','CUST_9_SEGMENTS_CD']
+for i in label:
+	train[i].fillna(-1, inplace = True)
+	train_test[i].fillna(-1, inplace = True)
+
+#將剩餘連續變數的nan以平均值填補
+for i in list(train.columns):
+    if train[i].isnull().any() == True:
+        nan_mean = np.nanmean(train[i])
+		train[i].fillna(nan_mean, inplace = True)
+    if train_test[i].isnull().any() == True:
+        nan_mean = np.nanmean(train_test[i])
+		train_test[i].fillna(nan_mean, inplace = True)
+		
+#找出dummy variable	
+cat_vars=[]
+for i in train.columns:
+    if 3 <= len(list(train[i].unique())) <= 8:
+        cat_vars.append(i)	
+#去除其中不是分類變數的五個
+c=['L1YR_B_ISSUE_CNT', 'APC_CNT', 'RFM_M_LEVEL', 'BANK_NUMBER_CNT', 'IM_CNT']
+for i in cat_vars:
+    if i in c:
+        cat_vars.remove(i)
+for var in cat_vars:
+    cat_list = pd.get_dummies(train[var], prefix=var)
+    train1=train.join(cat_list)
+    train=train1
+train_vars=train.columns.values.tolist()
+to_keep=[i for i in train_vars if i not in cat_vars]	
+train_final=train[to_keep]
+train_final=train_final.drop(['EDUCATION_CD_2.1690752536569398','OCCUPATION_CLASS_CD_1.3049666805497708',
+                  'APC_1ST_AGE_2.5215275573891884','INSD_1ST_AGE_2.4884853098798945','RFM_R_2.382605015342292',
+                  'REBUY_TIMES_CNT_1.9878874431397442','LEVEL_3.5579151600670254'],axis=1)		
+
+#使用SMOTE 製造假樣本
+X = train_final.loc[:, train_final.columns != 'Y1']
+y = train_final.loc[:, train_final.columns == 'Y1']
+
+from imblearn.over_sampling import SMOTE
+os = SMOTE(random_state=0)
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=0)
+columns = X_train.columns
+os_data_X, os_data_y = os.fit_sample(X_train, y_train)
+os_data_X = pd.DataFrame(data = os_data_X, columns = columns )
+os_data_y = pd.DataFrame(data = os_data_y, columns = ['Y1'])
+
+#用RFE選擇特徵
+from sklearn.feature_selection import RFE
+from sklearn.linear_model import LogisticRegression
+logreg = LogisticRegression()
+rfe = RFE(logreg, 50)
+rfe = rfe.fit(os_data_X, os_data_y)
+print(rfe.support_)
+print(rfe.ranking_)
+
+# 讀取資料(未經過SMOTE製造人工樣本)
+train = pd.read_csv('train_origin.csv')
+X_test = pd.read_csv('test_dummy.csv')
+print(train.shape)
+print(X_test.shape)
+
+X = train.iloc[:, 0:(train.shape[1] - 1)]
+y = train.iloc[:, train.shape[1]-1]
+
+# 隨機將train set分成7:3，形成train set and cross-validation set
+X_train, X_cv, y_train, y_cv = train_test_split(X, y, test_size = 0.3, random_state = 33)
+
+# 不調整任何參數，先跑一次看看結果如何
+xgbc = XGBClassifier()
+xgbc.fit(X_train, y_train)
+pred1 = xgbc.predict(X_cv)
+# 只有預測出14個 Y =1 
+print(sum(pred1))
+np.mean(pred1 == y_cv)
+
+from sklearn.metrics import classification_report
+print(classification_report(y_cv, pred1))
+#用cross-validation set去分別看預測 Y=1或 Y=0時 f1-score的表現
+
+# 改以讀取預先處理(SMOTE)好的Data，數聚合成訓練集
+train_synthetic = pd.read_csv('train_synthetic.csv')
+X_syn = train_synthetic.iloc[:, 0:(train_synthetic.shape[1] - 1)]
+y_syn = train_synthetic.iloc[:, train_synthetic.shape[1]-1]
+
+# 將此訓練集分成7:3，形成train set and cross-validation set
+X_train_syn, X_cv_syn, y_train_syn, y_cv_syn = train_test_split(X_syn, y_syn, test_size = 0.3, random_state = 33)
+
+# 不調整任何參數，先跑一次看看結果如何
+xgbc2 = XGBClassifier()
+xgbc2.fit(X_train_syn, y_train_syn)
+pred2 = xgbc2.predict(X_cv_syn)
+
+# 用cross-validation set去分別看預測 Y=1或 Y=0時 f1-score的表現，即使分數很高，但有overfitting的嫌疑。
+print(classification_report(y_cv_syn, pred2))
+
+# 然而丟到 test set 去測試卻只預測出 321 個 Y = 1
+# 放到網站上準確率只有50%左右 
+pred3 = xgbc2.predict(X_test)
+sum(pred3)
+
+# 讀取資料，此資料為經過undersampling後的資料，共4000個樣本，Y=1、Y=0各佔一半。
+train = pd.read_csv('train_under.csv')
+X_test = pd.read_csv('test_dummy.csv')
+print(train.shape)
+print(X_test.shape)
+X = train.iloc[:, 0:(train.shape[1] - 1)]
+y = train.iloc[:, train.shape[1]-1]
+
+# 隨機將train set分成7:3，形成train set and cross-validation set
+X_train_und, X_cv_und, y_train_und, y_cv_und = train_test_split(X, y, test_size = 0.3, random_state = 33)
+
+# 不調整任何參數，先跑一次看看結果如何
+xgbc = XGBClassifier()
+xgbc.fit(X_train_und, y_train_und)
+# 模型在訓練集的準確度
+xgbc.score(X_train_und, y_train_und)
+
+# 用cross-validation set去分別看預測 Y=1或 Y=0時 f1-score的表現
+# 模型較能夠平衡的預測Y=1、Y=0
+# 因此決定以此為基礎，開始調整XGBoost的參數
+pred1 = xgbc.predict(X_cv_und)
+print(classification_report(y_cv_und, pred1))
+
+# 首先設置一些基本參數 Y1、features names
+target = 'Y1'
+predictors = X.columns
+predictors
+
+# 建構model fitting的function
+def modelfit(alg, dtrain, predictors,useTrainCV=True, cv_folds=5, early_stopping_rounds=50):
+    if useTrainCV:
+        xgb_param = alg.get_xgb_params()
+        xgtrain = xgb.DMatrix(dtrain[predictors].values, label=dtrain[target].values)
+        cvresult = xgb.cv(xgb_param, xgtrain, num_boost_round=alg.get_params()['n_estimators'], nfold=cv_folds,
+            metrics='auc', early_stopping_rounds=early_stopping_rounds, verbose_eval=False)
+        alg.set_params(n_estimators=cvresult.shape[0])
+
+# 經由訓練集配適此演算法
+    alg.fit(dtrain[predictors], dtrain['Y1'],eval_metric='auc')
+    
+# 預測訓練集
+    dtrain_predictions = alg.predict(dtrain[predictors])
+    dtrain_predprob = alg.predict_proba(dtrain[predictors])[:,1]
+    
+# print出準確率、訓練集的 AUC score，並畫出特徵值的重要性排序的圖
+    print("\nModel Report")
+    print("Accuracy : %.4g" % metrics.accuracy_score(dtrain['Y1'].values, dtrain_predictions))
+    print("AUC Score (Train): %f" % metrics.roc_auc_score(dtrain['Y1'], dtrain_predprob))
+                
+    feat_imp = pd.Series(alg.get_booster().get_fscore()).sort_values(ascending=False)
+    feat_imp.plot(kind='bar', title='Feature Importances')
+    plt.ylabel('Feature Importance Score')
+
+# 開始網格搜尋，找尋最佳n_estimators
+param_test1= {'n_estimators':range(100,500,50)}
+gsearch1 = GridSearchCV(estimator = XGBClassifier(learning_rate = 0.1, max_depth = 5, min_child_weight = 1, 
+                                                  gamma = 0, subsample = 0.8, colsample_bytree = 0.8, 
+                                                  objective = 'binary:logistic', nthread = 4, 
+                                                  scale_pos_weight = 1, seed = 27), param_grid = param_test1, 
+                                                  scoring = 'roc_auc', n_jobs = 4, iid = False, cv = 5)
+gsearch1.fit(train[predictors],train[target])
+gsearch1.best_params_, gsearch1.best_score_
+
+# 找尋最佳的 max_depth、min_child_weight
+param_test2 = {'max_depth':range(3,10,2), 'min_child_weight':range(1,6,2)}
+gsearch2 = GridSearchCV(estimator = XGBClassifier(learning_rate = 0.1, n_estimators = 100,
+                                                  gamma = 0, subsample = 0.8, colsample_bytree = 0.8, 
+                                                  objective = 'binary:logistic', nthread = 4, 
+                                                  scale_pos_weight = 1, seed = 27), param_grid = param_test2, 
+                                                  scoring = 'roc_auc', n_jobs = 4, iid = False, cv = 5)
+gsearch2.fit(train[predictors],train[target])
+gsearch2.best_params_, gsearch2.best_score_
+
+# 找尋最佳的 gamma
+param_test3 = {'gamma':[i/10.0 for i in range(0,5)]}
+gsearch3 = GridSearchCV(estimator = XGBClassifier(learning_rate = 0.1, n_estimators = 100, max_depth = 3, 
+                                                  min_child_weight = 5, subsample = 0.8, colsample_bytree = 0.8, 
+                                                  objective = 'binary:logistic', nthread = 4, 
+                                                  scale_pos_weight = 1, seed = 27), param_grid = param_test3, 
+                                                  scoring = 'roc_auc', n_jobs = 4, iid = False, cv = 5)
+gsearch3.fit(train[predictors],train[target])
+gsearch3.best_params_, gsearch3.best_score_
+
+#找尋最佳的 subsample、colsample_bytree
+param_test4 = {'subsample':[i/10.0 for i in range(6,10)], 'colsample_bytree':[i/10.0 for i in range(6,10)]}
+gsearch4 = GridSearchCV(estimator = XGBClassifier(learning_rate = 0.1, n_estimators = 100, max_depth = 3, min_child_weight = 5, 
+                                                  gamma = 0.1, objective = 'binary:logistic', nthread = 4, 
+                                                  scale_pos_weight = 1, seed = 27), param_grid = param_test4, 
+                                                  scoring = 'roc_auc', n_jobs = 4, iid = False, cv = 5)
+gsearch4.fit(train[predictors],train[target])
+gsearch4.best_params_, gsearch4.best_score_
+
+#更精細的用0.05測試
+param_test5 = {
+ 'subsample':[i/100.0 for i in range(65,80,5)],
+ 'colsample_bytree':[i/100.0 for i in range(75,90,5)]
+}
+gsearch5 = GridSearchCV(estimator = XGBClassifier(learning_rate = 0.1, n_estimators = 100, max_depth = 3, min_child_weight = 5, 
+                                                  gamma = 0.1, objective = 'binary:logistic', nthread = 4, 
+                                                  scale_pos_weight = 1, seed = 27), param_grid = param_test5, 
+                                                  scoring = 'roc_auc', n_jobs = 4, iid = False, cv = 5)
+gsearch5.fit(train[predictors],train[target])
+gsearch5.best_params_, gsearch5.best_score_
+
+# 找尋最佳的 reg_alpha
+param_test6 = {
+ 'reg_alpha':[1e-5, 1e-2, 0.1, 1]
+}
+gsearch6 = GridSearchCV(estimator = XGBClassifier(learning_rate = 0.1, n_estimators = 100, max_depth = 3, 
+                                                  min_child_weight = 5, subsample = 0.65, colsample_bytree = 0.75, 
+                                                  gamma = 0.1, objective = 'binary:logistic', nthread = 4, 
+                                                  scale_pos_weight = 1, seed = 27), param_grid = param_test6, 
+                                                  scoring = 'roc_auc', n_jobs = 4, iid = False, cv = 5)
+gsearch6.fit(train[predictors],train[target])
+gsearch6.best_params_, gsearch6.best_score_
+
+# 更精細的去找
+param_test7 = {
+ 'reg_alpha':[0.00001, 0.00005, 0.0001, 0.0005, 0.001, 0.005]
+}
+gsearch7 = GridSearchCV(estimator = XGBClassifier(learning_rate = 0.1, n_estimators = 100, max_depth = 3, 
+                                                  min_child_weight = 5, subsample = 0.65, colsample_bytree = 0.75, 
+                                                  gamma = 0.1, objective = 'binary:logistic', nthread = 4, 
+                                                  scale_pos_weight = 1, seed = 27), param_grid = param_test7, 
+                                                  scoring = 'roc_auc', n_jobs = 4, iid = False, cv = 5)
+gsearch7.fit(train[predictors],train[target])
+gsearch7.best_params_, gsearch7.best_score_
+
+# 最終將找尋出來的最佳參數套入模型中，先以learning rate = 0.1、決策樹為1000來試試看
+xgbc3 = XGBClassifier(
+ learning_rate =0.1,
+ n_estimators=1000,
+ max_depth=3,
+ min_child_weight=5,
+ gamma=0.1,
+ subsample=0.65,
+ colsample_bytree=0.75,
+ reg_alpha=1e-05,
+ objective= 'binary:logistic',
+ nthread=4,
+ scale_pos_weight=1,
+ seed=27)
+modelfit(xgbc3, train, predictors)
+
+# 接著使用更多決策樹(5000)並用較小的學習速率(0.01)
+xgbc4 = XGBClassifier(
+ learning_rate =0.01,
+ n_estimators=5000,
+ max_depth=3,
+ min_child_weight=5,
+ gamma=0.1,
+ subsample=0.65,
+ colsample_bytree=0.75,
+ reg_alpha=1e-05,
+ objective= 'binary:logistic',
+ nthread=4,
+ scale_pos_weight=1,
+ seed=27)
+modelfit(xgbc4, train, predictors)
+
+# 最後將測試集放入fit好的model上，預測出結果。
+pred3 = xgbc3.predict(X_test)
+sum(pred3)
+pred4 = xgbc4.predict(X_test)
+sum(pred4)
+# 預測結果顯示總共41311個Y=1
+# 在測試集上得到76.84%的準確度
