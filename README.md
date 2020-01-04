@@ -8,3 +8,5 @@
 程式碼(python)：請點選"Code"資料夾
 
 Dataset：train.csv、test.csv、train_origin.csv、test_dummy.csv、train_synthetic.csv、train_under.csv
+
+書面報告:國泰大數據競賽.pdf
